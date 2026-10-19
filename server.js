@@ -1,3 +1,4 @@
+// server.js
 const WebSocket = require('ws');
 const PORT = process.env.PORT || 7070;
 const wss = new WebSocket.Server({ port: PORT });
@@ -9,7 +10,7 @@ console.log(`[H.A.Z.E. СИГНАЛИНГ] Сервер запущен на по
 wss.on('connection', (ws) => {
     let playerId = Math.floor(Math.random() * 1000000) + 2; // ID клиента (от 2 и выше)
     
-    // Если подключается самый первый игрок в комнату, мы можем назначить его Хостом (ID: 1)
+    // Самый первый вошедший всегда становится Хостом
     if (players.length === 0) {
         playerId = 1;
     }
@@ -23,10 +24,14 @@ wss.on('connection', (ws) => {
     // Уведомляем остальных, что зашел новый участник
     broadcast({ type: "player_connected", id: playerId }, playerId);
 
-    ws.on('message', (message) => {
+    ws.on('message', (rawMessage) => {
         try {
-            const data = JSON.parse(message);
-            // Пересылаем сетевые WebRTC-данные конкретному адресату
+            // КРИТИЧЕСКИЙ ФИКС ДЛЯ GODOT 4: 
+            // Переводим входящий бинарный буфер пакета в обычную UTF-8 строку!
+            const textMessage = rawMessage.toString('utf8');
+            const data = JSON.parse(textMessage);
+            
+            // Пересылаем WebRTC-данные конкретному адресату
             if (data.target) {
                 const targetPlayer = players.find(p => p.id === parseInt(data.target));
                 if (targetPlayer) {
@@ -35,7 +40,7 @@ wss.on('connection', (ws) => {
                 }
             }
         } catch (e) {
-            console.error("Ошибка парсинга сообщения:", e);
+            console.error("[ОШИБКА СЕРВЕРА] Не удалось обработать пакет от Godot:", e.message);
         }
     });
 
