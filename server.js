@@ -8,30 +8,37 @@ let players = [];
 console.log(`[H.A.Z.E. СИГНАЛИНГ] Сервер запущен на порту ${PORT}`);
 
 wss.on('connection', (ws) => {
-    let playerId = Math.floor(Math.random() * 1000000) + 2; // ID клиента (от 2 и выше)
+    // Если игроков нет, первый зашедший ВСЕГДА Хост (ID 1)
+    let playerId = 1;
     
-    // Самый первый вошедший всегда становится Хостом
-    if (players.length === 0) {
-        playerId = 1;
+    // Если Хост уже есть, выдаем клиенту случайный ID
+    if (players.some(p => p.id === 1)) {
+        playerId = Math.floor(Math.random() * 1000000) + 2;
     }
 
     const playerObj = { id: playerId, ws: ws };
     players.push(playerObj);
     
     console.log(`[ПОДКЛЮЧЕНИЕ] Игрок зарегистрирован под ID: ${playerId}`);
+    
+    // 1. Отправляем игроку его личный ID
     ws.send(JSON.stringify({ type: "id", id: playerId }));
 
-    // Уведомляем остальных, что зашел новый участник
-    broadcast({ type: "player_connected", id: playerId }, playerId);
+    // 2. ИСПРАВЛЕНИЕ: Мгновенно отправляем новому игроку список ВСЕХ, кто уже онлайн на сервере!
+    // Это заставит WebRTC в Godot сразу начать сопряжение, не дожидаясь чужих сигналов.
+    players.forEach(oldPlayer => {
+        if (oldPlayer.id !== playerId) {
+            ws.send(JSON.stringify({ type: "player_connected", id: oldPlayer.id }));
+            // Также уведомляем старого игрока о новом коннекте
+            oldPlayer.ws.send(JSON.stringify({ type: "player_connected", id: playerId }));
+        }
+    });
 
     ws.on('message', (rawMessage) => {
         try {
-            // КРИТИЧЕСКИЙ ФИКС ДЛЯ GODOT 4: 
-            // Переводим входящий бинарный буфер пакета в обычную UTF-8 строку!
             const textMessage = rawMessage.toString('utf8');
             const data = JSON.parse(textMessage);
             
-            // Пересылаем WebRTC-данные конкретному адресату
             if (data.target) {
                 const targetPlayer = players.find(p => p.id === parseInt(data.target));
                 if (targetPlayer) {
@@ -40,21 +47,19 @@ wss.on('connection', (ws) => {
                 }
             }
         } catch (e) {
-            console.error("[ОШИБКА СЕРВЕРА] Не удалось обработать пакет от Godot:", e.message);
+            console.error("[ОШИБКА] Сбой пакета:", e.message);
         }
     });
 
     ws.on('close', () => {
         players = players.filter(p => p.id !== playerId);
-        console.log(`[ОТКЛЮЧЕНИЕ] Игрок ${playerId} покинул комнату`);
-        broadcast({ type: "player_disconnected", id: playerId });
+        console.log(`[ОТКЛЮЧЕНИЕ] Игрок ${playerId} вышел`);
+        
+        // Уведомляем оставшихся
+        players.forEach(p => {
+            if (p.ws.readyState === WebSocket.OPEN) {
+                p.ws.send(JSON.stringify({ type: "player_disconnected", id: playerId }));
+            }
+        });
     });
 });
-
-function broadcast(data, excludeId = null) {
-    players.forEach(p => {
-        if (p.id !== excludeId && p.ws.readyState === WebSocket.OPEN) {
-            p.ws.send(JSON.stringify(data));
-        }
-    });
-}
