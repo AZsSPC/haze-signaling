@@ -9,11 +9,11 @@ console.log(`[H.A.Z.E. СИГНАЛИНГ] Сервер запущен на по
 
 wss.on('connection', (ws) => {
     // Если игроков нет, первый зашедший ВСЕГДА Хост (ID 1)
-    let playerId = 1;
-    
-    // Если Хост уже есть, выдаем клиенту случайный ID
-    if (players.some(p => p.id === 1)) {
-        playerId = Math.floor(Math.random() * 1000000) + 2;
+    let playerId = 100;
+
+    // Если Хост уже занят, выдаем клиенту случайный ID
+    if (players.some(p => p.id == 100)) {
+        playerId = Math.floor(Math.random() * 1000000) + 101; 
     }
 
     const playerObj = { id: playerId, ws: ws };
