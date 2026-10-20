@@ -7,68 +7,99 @@ let players = [];
 
 console.log(`[H.A.Z.E. СИГНАЛИНГ] Сервер запущен на порту ${PORT}`);
 
-wss.on('connection', (ws) => {
-    // Если игроков нет, первый зашедший ВСЕГДА Хост (ID 1)
-    let playerId = 100;
+// Функция для очистки и уведомления об отключении игрока
+function handlePlayerDisconnect(playerId) {
+    const initialLength = players.length;
+    players = players.filter(p => p.id !== playerId);
+    
+    if (players.length !== initialLength) {
+        console.log(`[ОТКЛЮЧЕНИЕ] Игрок ${playerId} удален из системы`);
+        // Уведомляем всех оставшихся участников сети
+        players.forEach(p => {
+            if (p.ws.readyState === WebSocket.OPEN) {
+                p.ws.send(JSON.stringify({ type: "player_disconnected", id: playerId }));
+            }
+        });
+    }
+}
 
-    // Если Хост уже занят, выдаем клиенту случайный ID
-    if (players.some(p => p.id == 100)) {
-        playerId = Math.floor(Math.random() * 1000000) + 101; 
+wss.on('connection', (ws) => {
+    // Метка для проверки активности (Heartbeat)
+    ws.isAlive = true;
+    
+    // Перехватываем понг от клиента
+    ws.on('pong', () => {
+        ws.isAlive = true;
+    });
+
+    // Определяем ID (Если игроков нет — первый зашедший всегда Хост (ID 1))
+    let playerId = 1;
+    if (players.some(p => p.id === 1)) {
+        playerId = Math.floor(Math.random() * 1000000) + 2;
     }
 
     const playerObj = { id: playerId, ws: ws };
     players.push(playerObj);
-    
     console.log(`[ПОДКЛЮЧЕНИЕ] Игрок зарегистрирован под ID: ${playerId}`);
-    
+
     // 1. Отправляем игроку его личный ID
     ws.send(JSON.stringify({ type: "id", id: playerId }));
 
-    // 2. ИСПРАВЛЕНИЕ: Мгновенно отправляем новому игроку список ВСЕХ, кто уже онлайн на сервере!
-    // Это заставит WebRTC в Godot сразу начать сопряжение, не дожидаясь чужих сигналов.
+    // 2. Мгновенно отправляем новому игроку список всех, кто уже онлайн
     players.forEach(oldPlayer => {
         if (oldPlayer.id !== playerId) {
             ws.send(JSON.stringify({ type: "player_connected", id: oldPlayer.id }));
-            // Также уведомляем старого игрока о новом коннекте
-            oldPlayer.ws.send(JSON.stringify({ type: "player_connected", id: playerId }));
+            // Уведомляем старого игрока о новом коннекте
+            if (oldPlayer.ws.readyState === WebSocket.OPEN) {
+                oldPlayer.ws.send(JSON.stringify({ type: "player_connected", id: playerId }));
+            }
         }
     });
 
+    // Обработка входящих пакетов маршрутизации WebRTC
     ws.on('message', (rawMessage) => {
         try {
             const textMessage = rawMessage.toString('utf8');
             const data = JSON.parse(textMessage);
-            
             if (data.target) {
-                // ИСПРАВЛЕНО: Используем === для сравнения и объявили переменную правильно
                 const targetPlayer = players.find(p => p.id === parseInt(data.target));
-                
-                if (targetPlayer) {
+                if (targetPlayer && targetPlayer.ws.readyState === WebSocket.OPEN) {
                     data.sender = playerId;
                     targetPlayer.ws.send(JSON.stringify(data));
-                } else {
-                    console.log(`[СИГНАЛИНГ] Игрок-цель ${data.target} не найден.`);
                 }
             }
         } catch (e) {
-            console.error("[ОШИБКА] Сбой обработки пакета:", e.message);
+            console.error(`[ОШИБКА] Сбой парсинга пакета от игрока ${playerId}:`, e.message);
         }
     });
 
-
+    // Штатное закрытие соединения
     ws.on('close', () => {
-        players = players.filter(p => p.id !== playerId);
-        console.log(`[ОТКЛЮЧЕНИЕ] Игрок ${playerId} вышел`);
-        
-        // Уведомляем оставшихся
-        players.forEach(p => {
-            if (p.id !== playerId && p.ws.readyState === 1) { // 1 означает OPEN
-                p.ws.send(JSON.stringify({
-                    "type": "player_connected",
-                    "id": playerId
-                }));
-            }
-        });
-
+        handlePlayerDisconnect(playerId);
     });
+
+    // Обработка системных ошибок сокета
+    ws.on('error', (err) => {
+        console.error(`[ОШИБКА СОКЕТА] Игрок ${playerId}:`, err.message);
+        handlePlayerDisconnect(playerId);
+    });
+});
+
+// --- МЕХАНИЗМ HEARTBEAT (ОЧИСТКА ЗАВИСШИХ СЕССИЙ) ---
+// Каждые 30 секунд опрашиваем всех клиентов. Если кто-то не прислал 'pong', закрываем сокет.
+const interval = setInterval(() => {
+    wss.clients.forEach((ws) => {
+        if (ws.isAlive === false) {
+            console.log("[HEARTBEAT] Обнаружен мертвый сокет. Принудительное закрытие...");
+            return ws.terminate(); // Вызовет событие 'close', которое запустит handlePlayerDisconnect
+        }
+        
+        ws.isAlive = false;
+        ws.ping(); // Отправляем ping. Клиент (Godot или браузер) автоматически ответит pong
+    });
+}, 30000);
+
+// Защита от утечки памяти при остановке сервера
+wss.on('close', () => {
+    clearInterval(interval);
 });
