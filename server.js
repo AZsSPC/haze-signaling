@@ -40,16 +40,21 @@ wss.on('connection', (ws) => {
             const data = JSON.parse(textMessage);
             
             if (data.target) {
+                // ИСПРАВЛЕНО: Используем === для сравнения и объявили переменную правильно
                 const targetPlayer = players.find(p => p.id === parseInt(data.target));
+                
                 if (targetPlayer) {
                     data.sender = playerId;
                     targetPlayer.ws.send(JSON.stringify(data));
+                } else {
+                    console.log(`[СИГНАЛИНГ] Игрок-цель ${data.target} не найден.`);
                 }
             }
         } catch (e) {
-            console.error("[ОШИБКА] Сбой пакета:", e.message);
+            console.error("[ОШИБКА] Сбой обработки пакета:", e.message);
         }
     });
+
 
     ws.on('close', () => {
         players = players.filter(p => p.id !== playerId);
