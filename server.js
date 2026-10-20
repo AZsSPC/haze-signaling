@@ -62,9 +62,13 @@ wss.on('connection', (ws) => {
         
         // Уведомляем оставшихся
         players.forEach(p => {
-            if (p.ws.readyState === WebSocket.OPEN) {
-                p.ws.send(JSON.stringify({ type: "player_disconnected", id: playerId }));
+            if (p.id !== playerId && p.ws.readyState === 1) { // 1 означает OPEN
+                p.ws.send(JSON.stringify({
+                    "type": "player_connected",
+                    "id": playerId
+                }));
             }
         });
+
     });
 });
